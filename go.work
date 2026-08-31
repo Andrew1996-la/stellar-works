@@ -1,0 +1,12 @@
+// TODO: Не забудь поменять имя модуля github.com/student на своё
+//       во всех go.mod файлах (order, inventory, payment, shared)
+//       и обновить все импорты в коде!
+
+go 1.26.0
+
+use (
+	./inventory
+	./order
+	./payment
+	./shared
+)
