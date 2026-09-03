@@ -1,5 +1,4 @@
-// TODO: Поменяй имя модуля github.com/student на своё и обнови все импорты
-module github.com/student/shared
+module github.com/Andrew1996-la/stellar-works/shared
 
 go 1.26.0
 
