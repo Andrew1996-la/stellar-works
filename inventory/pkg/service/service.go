@@ -1,7 +1,9 @@
 package service
 
 import (
+	"cmp"
 	"context"
+	"slices"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -106,21 +108,39 @@ func (s *server) GetPart(
 	ctx context.Context,
 	req *inventoryv1.GetPartRequest,
 ) (*inventoryv1.GetPartResponse, error) {
-	// TODO: Реализовать метод
-	// 1. Проверить, что uuid не пустой → INVALID_ARGUMENT
-	// 2. Валидировать формат UUID → INVALID_ARGUMENT
-	// 3. Найти деталь в map
-	// 4. Если не найдена → NOT_FOUND
-	// 5. Преобразовать в inventoryv1.Part
-	// 6. Вернуть деталь
+	// Проверить, что uuid не пустой → INVALID_ARGUMENT
+	if req.GetUuid() == "" {
+		return nil, status.Error(codes.InvalidArgument, "uuid обязателен")
+	}
+	// Валидировать формат UUID → INVALID_ARGUMENT
+	id, err := uuid.Parse(req.GetUuid())
 
-	// TODO: Валидация формата UUID v4
-	// Можно использовать github.com/google/uuid:
-	// if _, err := uuid.Parse(req.GetUuid()); err != nil {
-	//     return nil, status.Errorf(codes.InvalidArgument, "неверный формат uuid: %s", req.GetUuid())
-	// }
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "неверный формат uuid: %s", req.GetUuid())
+	}
 
-	return nil, status.Error(codes.Unimplemented, "метод GetPart не реализован")
+	// Найти деталь в map
+	// Если не найдена → NOT_FOUND
+	part, ok := s.parts[id]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "деталь не найдена")
+	}
+
+	// Преобразовать в inventoryv1.Part
+	grpcPart := &inventoryv1.Part{
+		Uuid:          part.UUID,
+		Name:          part.Name,
+		Description:   part.Description,
+		Price:         part.Price,
+		PartType:      part.PartType,
+		StockQuantity: part.StockQuantity,
+		CreatedAt:     part.CreatedAt,
+	}
+
+	// Вернуть деталь
+	return &inventoryv1.GetPartResponse{
+		Part: grpcPart,
+	}, nil
 }
 
 // ListParts возвращает список деталей с опциональной фильтрацией по типу
@@ -128,13 +148,67 @@ func (s *server) ListParts(
 	ctx context.Context,
 	req *inventoryv1.ListPartsRequest,
 ) (*inventoryv1.ListPartsResponse, error) {
-	// TODO: Реализовать метод
-	// 1. Если передан список uuids → найти детали по UUID (сохраняя порядок запроса)
+	//  Если передан список uuids → найти детали по UUID (сохраняя порядок запроса)
 	//    - Проверить формат каждого UUID → INVALID_ARGUMENT
 	//    - Если хоть один UUID не найден → NOT_FOUND
-	// 2. Иначе если part_type == UNSPECIFIED → вернуть все детали
-	// 3. Иначе → фильтровать по типу
-	// 4. Отсортировать по имени (только для фильтрации по типу, не для uuids)
+	if len(req.Uuids) > 0 {
+		partsListGrpc := make([]*inventoryv1.Part, len(req.Uuids))
 
-	return nil, status.Error(codes.Unimplemented, "метод ListParts не реализован")
+		for index, partUuid := range req.Uuids {
+			id, err := uuid.Parse(partUuid)
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "неверный формат uuid: %s", partUuid)
+			}
+
+			part, ok := s.parts[id]
+			if !ok {
+				return nil, status.Errorf(codes.NotFound, "деталь c uuid %s не найдена", id)
+			}
+
+			partsListGrpc[index] = &inventoryv1.Part{
+				Uuid:          part.UUID,
+				Name:          part.Name,
+				Description:   part.Description,
+				Price:         part.Price,
+				PartType:      part.PartType,
+				StockQuantity: part.StockQuantity,
+				CreatedAt:     part.CreatedAt,
+			}
+		}
+
+		return &inventoryv1.ListPartsResponse{
+			Parts: partsListGrpc,
+		}, nil
+	}
+
+	// иначе если part_type == UNSPECIFIED → вернуть все детали
+	partsListGrpc := make([]*inventoryv1.Part, 0)
+	for _, part := range s.parts {
+		// проверяю что деталь не UNSPECIFIED и что она нужного типа
+		if req.PartType != inventoryv1.PartType_PART_TYPE_UNSPECIFIED && part.PartType != req.PartType {
+			continue
+		}
+
+		grpcPart := &inventoryv1.Part{
+			Uuid:          part.UUID,
+			Name:          part.Name,
+			Description:   part.Description,
+			Price:         part.Price,
+			PartType:      part.PartType,
+			StockQuantity: part.StockQuantity,
+			CreatedAt:     part.CreatedAt,
+		}
+
+		partsListGrpc = append(partsListGrpc, grpcPart)
+	}
+
+	// Иначе → фильтровать по типу
+	// Отсортировать по имени (только для фильтрации по типу, не для uuids)
+	slices.SortFunc(partsListGrpc, func(a, b *inventoryv1.Part) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+
+	return &inventoryv1.ListPartsResponse{
+		Parts: partsListGrpc,
+	}, nil
 }
