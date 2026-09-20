@@ -185,7 +185,7 @@ func (s *server) ListParts(
 	partsListGrpc := make([]*inventoryv1.Part, 0)
 	for _, part := range s.parts {
 		// проверяю что деталь не UNSPECIFIED и что она нужного типа
-		if req.PartType != inventoryv1.PartType_PART_TYPE_UNSPECIFIED && part.PartType != req.PartType {
+		if req.GetPartType() != inventoryv1.PartType_PART_TYPE_UNSPECIFIED && part.PartType != req.PartType {
 			continue
 		}
 

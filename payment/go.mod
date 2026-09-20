@@ -8,6 +8,7 @@ require go.opentelemetry.io/otel/sdk v1.42.0 // indirect
 
 require (
 	github.com/Andrew1996-la/stellar-works/shared v0.0.0-00010101000000-000000000000
+	github.com/google/uuid v1.6.0
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
