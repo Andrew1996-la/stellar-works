@@ -114,7 +114,6 @@ func (s *server) GetPart(
 	}
 	// Валидировать формат UUID → INVALID_ARGUMENT
 	id, err := uuid.Parse(req.GetUuid())
-
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "неверный формат uuid: %s", req.GetUuid())
 	}

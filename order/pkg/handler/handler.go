@@ -155,8 +155,6 @@ func (h *handler) GetOrder(_ context.Context, params orderv1.GetOrderParams) (or
 	}, nil
 }
 
-// TODO: Реализовать остальные методы интерфейса orderv1.Handler:
-//
 // CreateOrder реализует операцию createOrder
 // POST /api/v1/orders
 func (h *handler) CreateOrder(ctx context.Context, req *orderv1.CreateOrderRequest) (orderv1.CreateOrderRes, error) {
@@ -234,8 +232,8 @@ func (h *handler) CreateOrder(ctx context.Context, req *orderv1.CreateOrderReque
 	var totalPrice int64
 	for _, part := range parts.Parts {
 		if part.StockQuantity <= 0 {
-			return &orderv1.CreateOrderNotFound{
-				Code:    http.StatusNotFound,
+			return &orderv1.CreateOrderConflict{
+				Code:    http.StatusConflict,
 				Message: fmt.Sprintf("деталь с id:%s отсутствует на складе", part.GetUuid()),
 			}, nil
 		}

@@ -4,11 +4,11 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	paymentv1 "github.com/Andrew1996-la/stellar-works/shared/pkg/proto/payment/v1"
-	"github.com/google/uuid"
 )
 
 // server реализует gRPC сервис оплаты
@@ -48,7 +48,8 @@ func (s *server) PayOrder(
 	transactionUUID := uuid.NewString()
 
 	// Вывести в лог: "оплата прошла успешно, order_uuid: X, transaction_uuid: Y"
-	slog.Info("оплата прошла успешно",
+	slog.Info(
+		"оплата прошла успешно",
 		"order_uuid", req.GetOrderUuid(),
 		"transaction_uuid", transactionUUID,
 	)

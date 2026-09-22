@@ -46,7 +46,7 @@ func main() {
 	)
 	if err != nil {
 		slog.Error("не удалось подключиться к InventoryService", "error", err)
-		os.Exit(1)
+		return
 	}
 	defer inventoryConn.Close()
 
@@ -62,7 +62,7 @@ func main() {
 	)
 	if err != nil {
 		slog.Error("не удалось подключиться к PaymentService", "error", err)
-		os.Exit(1)
+		return
 	}
 	defer paymentConn.Close()
 
@@ -78,7 +78,7 @@ func main() {
 	orderServer, err := orderHandler.SetupServer(h)
 	if err != nil {
 		slog.Error("ошибка создания сервера OpenAPI", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	server := &http.Server{

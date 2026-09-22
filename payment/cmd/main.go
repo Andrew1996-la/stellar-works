@@ -29,10 +29,15 @@ const (
 )
 
 func main() {
-	lis, err := net.Listen("tcp", grpcAddress)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	var lc net.ListenConfig
+
+	lis, err := lc.Listen(ctx, "tcp", grpcAddress)
 	if err != nil {
 		slog.Error("не удалось создать listener", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	grpcServer := grpc.NewServer(
@@ -55,9 +60,6 @@ func main() {
 	reflection.Register(grpcServer)
 
 	slog.Info("запуск PaymentService")
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	go func() {
 		slog.Info("grpc сервис Payment запущен", "address", grpcAddress)

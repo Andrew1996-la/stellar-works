@@ -29,10 +29,15 @@ const (
 )
 
 func main() {
-	lis, err := net.Listen("tcp", grpcAddress)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	var lc net.ListenConfig
+
+	lis, err := lc.Listen(ctx, "tcp", grpcAddress)
 	if err != nil {
 		slog.Error("не удалось создать listener", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	grpcServer := grpc.NewServer(
@@ -46,7 +51,8 @@ func main() {
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             grpcMinPingInterval,
 			PermitWithoutStream: true,
-		}))
+		}),
+	)
 
 	inventoryv1.RegisterInventoryServiceServer(grpcServer, inventoryService.NewServer())
 
@@ -54,9 +60,6 @@ func main() {
 	reflection.Register(grpcServer)
 
 	slog.Info("запуск InventoryService", "адрес", grpcAddress)
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	go func() {
 		slog.Info("grpc сервис Inventory запущен:", "адрес", grpcAddress)
