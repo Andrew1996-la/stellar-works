@@ -29,12 +29,8 @@ const (
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	var lc net.ListenConfig
-
-	lis, err := lc.Listen(ctx, "tcp", grpcAddress)
+	//nolint:noctx // Контекст здесь не нужен: GracefulStop() сам закроет listener и прервёт Accept()
+	lis, err := net.Listen("tcp", grpcAddress)
 	if err != nil {
 		slog.Error("не удалось создать listener", "error", err)
 		return
@@ -60,6 +56,9 @@ func main() {
 	reflection.Register(grpcServer)
 
 	slog.Info("запуск PaymentService")
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	go func() {
 		slog.Info("grpc сервис Payment запущен", "address", grpcAddress)

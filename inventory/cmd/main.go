@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -29,12 +28,8 @@ const (
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	var lc net.ListenConfig
-
-	lis, err := lc.Listen(ctx, "tcp", grpcAddress)
+	//nolint:noctx // Контекст здесь не нужен: GracefulStop() сам закроет listener и прервёт Accept()
+	lis, err := net.Listen("tcp", grpcAddress)
 	if err != nil {
 		slog.Error("не удалось создать listener", "error", err)
 		return
@@ -61,11 +56,14 @@ func main() {
 
 	slog.Info("запуск InventoryService", "адрес", grpcAddress)
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	go func() {
 		slog.Info("grpc сервис Inventory запущен:", "адрес", grpcAddress)
 		if err := grpcServer.Serve(lis); err != nil {
 			slog.Error("ошибка запуска сервера", "error", err)
-			os.Exit(1)
+			cancel()
 		}
 	}()
 

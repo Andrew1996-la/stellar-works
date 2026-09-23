@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -15,6 +16,9 @@ import (
 	inventoryv1 "github.com/Andrew1996-la/stellar-works/shared/pkg/proto/inventory/v1"
 	paymentv1 "github.com/Andrew1996-la/stellar-works/shared/pkg/proto/payment/v1"
 )
+
+// timeout для контекста grpc
+const grpcTimeout = 5 * time.Second
 
 // OrderStatus — статус заказа
 type OrderStatus string
@@ -36,19 +40,18 @@ const (
 )
 
 // Маппинг PaymentMethod между HTTP и gRPC
-func mapPaymentMethod(httpPaymentMethod orderv1.PaymentMethod) paymentv1.PaymentMethod {
-	switch httpPaymentMethod {
-	case orderv1.PaymentMethodCARD:
-		return paymentv1.PaymentMethod_PAYMENT_METHOD_CARD
-	case orderv1.PaymentMethodSBP:
-		return paymentv1.PaymentMethod_PAYMENT_METHOD_SBP
-	case orderv1.PaymentMethodCREDITCARD:
-		return paymentv1.PaymentMethod_PAYMENT_METHOD_CREDIT_CARD
-	case orderv1.PaymentMethodINVESTORMONEY:
-		return paymentv1.PaymentMethod_PAYMENT_METHOD_INVESTOR_MONEY
-	default:
-		return paymentv1.PaymentMethod_PAYMENT_METHOD_UNSPECIFIED
-	}
+var paymentMethodMap = map[orderv1.PaymentMethod]paymentv1.PaymentMethod{
+	orderv1.PaymentMethodCARD:          paymentv1.PaymentMethod_PAYMENT_METHOD_CARD,
+	orderv1.PaymentMethodSBP:           paymentv1.PaymentMethod_PAYMENT_METHOD_SBP,
+	orderv1.PaymentMethodCREDITCARD:    paymentv1.PaymentMethod_PAYMENT_METHOD_CREDIT_CARD,
+	orderv1.PaymentMethodINVESTORMONEY: paymentv1.PaymentMethod_PAYMENT_METHOD_INVESTOR_MONEY,
+}
+
+var paymentMethodToModelMap = map[orderv1.PaymentMethod]PaymentMethod{
+	orderv1.PaymentMethodCARD:          PaymentMethodCard,
+	orderv1.PaymentMethodSBP:           PaymentMethodSBP,
+	orderv1.PaymentMethodCREDITCARD:    PaymentMethodCreditCard,
+	orderv1.PaymentMethodINVESTORMONEY: PaymentMethodInvestorMoney,
 }
 
 // Order представляет заказ на постройку космического корабля
@@ -121,38 +124,7 @@ func (h *handler) GetOrder(_ context.Context, params orderv1.GetOrderParams) (or
 	}
 
 	// 3. Преобразовать в DTO и вернуть
-	var shieldUUID orderv1.OptNilUUID
-	if order.ShieldUUID != nil {
-		shieldUUID = orderv1.NewOptNilUUID(*order.ShieldUUID)
-	}
-
-	var weaponUUID orderv1.OptNilUUID
-	if order.WeaponUUID != nil {
-		weaponUUID = orderv1.NewOptNilUUID(*order.WeaponUUID)
-	}
-
-	var transactionUUID orderv1.OptNilUUID
-	if order.TransactionUUID != nil {
-		transactionUUID = orderv1.NewOptNilUUID(*order.TransactionUUID)
-	}
-
-	var paymentMethod orderv1.OptNilPaymentMethod
-	if order.PaymentMethod != nil {
-		paymentMethod = orderv1.NewOptNilPaymentMethod(orderv1.PaymentMethod(*order.PaymentMethod))
-	}
-
-	return &orderv1.OrderDto{
-		OrderUUID:       order.OrderUUID,
-		HullUUID:        order.HullUUID,
-		EngineUUID:      order.EngineUUID,
-		ShieldUUID:      shieldUUID,
-		WeaponUUID:      weaponUUID,
-		TotalPrice:      order.TotalPrice,
-		TransactionUUID: transactionUUID,
-		PaymentMethod:   paymentMethod,
-		Status:          orderv1.OrderStatus(order.Status),
-		CreatedAt:       order.CreatedAt,
-	}, nil
+	return orderToDTO(order), nil
 }
 
 // CreateOrder реализует операцию createOrder
@@ -181,50 +153,29 @@ func (h *handler) CreateOrder(ctx context.Context, req *orderv1.CreateOrderReque
 	// Добавляем не обязательные поля если они есть в массив uuids для передачи в ListParts
 	// Если детали shieldUUID и weaponUUID есть, то даем id для создания order
 	var shieldUUID *uuid.UUID
-	var weaponUUID *uuid.UUID
-	if req.ShieldUUID.Set && !req.ShieldUUID.Null {
-		partUUIDs = append(partUUIDs, req.ShieldUUID.Value.String())
-		shieldUUID = &req.ShieldUUID.Value
+	if v, ok := req.ShieldUUID.Get(); ok {
+		partUUIDs = append(partUUIDs, v.String())
+		shieldUUID = &v
 	}
 
-	if req.WeaponUUID.Set && !req.WeaponUUID.Null {
-		partUUIDs = append(partUUIDs, req.WeaponUUID.Value.String())
-		weaponUUID = &req.WeaponUUID.Value
+	var weaponUUID *uuid.UUID
+	if v, ok := req.WeaponUUID.Get(); ok {
+		partUUIDs = append(partUUIDs, v.String())
+		weaponUUID = &v
 	}
 
 	// 2. Получить детали через InventoryService.ListParts
+	grpcCtx, cancel := context.WithTimeout(ctx, grpcTimeout)
+	defer cancel()
+
 	parts, err := h.inventoryClient.ListParts(
-		ctx,
+		grpcCtx,
 		&inventoryv1.ListPartsRequest{
 			Uuids: partUUIDs,
 		},
 	)
 	if err != nil {
-		st, ok := status.FromError(err)
-		if !ok {
-			return &orderv1.CreateOrderInternalServerError{
-				Code:    http.StatusInternalServerError,
-				Message: "ошибка сервера",
-			}, nil
-		}
-
-		switch st.Code() {
-		case codes.NotFound:
-			return &orderv1.CreateOrderNotFound{
-				Code:    http.StatusNotFound,
-				Message: st.Message(),
-			}, nil
-		case codes.InvalidArgument:
-			return &orderv1.CreateOrderBadRequest{
-				Code:    http.StatusBadRequest,
-				Message: st.Message(),
-			}, nil
-		default:
-			return &orderv1.CreateOrderInternalServerError{
-				Code:    http.StatusInternalServerError,
-				Message: "ошибка сервера",
-			}, nil
-		}
+		return handleGRPCError(ctx, err, "createOrder"), nil
 	}
 
 	// 3. Проверить stock_quantity > 0
@@ -255,6 +206,8 @@ func (h *handler) CreateOrder(ctx context.Context, req *orderv1.CreateOrderReque
 		CreatedAt:  time.Now(),
 	}
 
+	slog.InfoContext(ctx, "заказ создан", "order_uuid", orderUUID, "total_price", totalPrice)
+
 	// 7. Сохранить в store
 	h.store.mu.Lock()
 	h.store.orders[orderUUID] = order
@@ -273,9 +226,8 @@ func (h *handler) PayOrder(ctx context.Context, req *orderv1.PayOrderRequest, pa
 	// 1. Найти заказ в store
 	h.store.mu.RLock()
 	order, ok := h.store.orders[params.OrderUUID]
-	h.store.mu.RUnlock()
-
 	if !ok {
+		h.store.mu.RUnlock()
 		return &orderv1.PayOrderNotFound{
 			Code:    http.StatusNotFound,
 			Message: fmt.Sprintf("order с id %s не найден", params.OrderUUID),
@@ -284,43 +236,49 @@ func (h *handler) PayOrder(ctx context.Context, req *orderv1.PayOrderRequest, pa
 
 	// 2. Проверить статус == PENDING_PAYMENT
 	if order.Status != OrderStatusPendingPayment {
+		h.store.mu.RUnlock()
 		return &orderv1.PayOrderConflict{
 			Code:    http.StatusConflict,
-			Message: "не верный статус платежа",
+			Message: "заказ не может быть оплачен в текущем статусе: " + string(order.Status),
 		}, nil
 	}
+	h.store.mu.RUnlock()
+
+	// Маппинг HTTP PaymentMethod в gRPC PaymentMethod
+	grpcPaymentMethod, ok := paymentMethodMap[req.PaymentMethod]
+	if !ok {
+		return &orderv1.PayOrderBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: "неизвестный способ оплаты",
+		}, nil
+	}
+
 	// Вызвать h.paymentClient.PayOrder для обработки платежа
-	transaction, err := h.paymentClient.PayOrder(ctx, &paymentv1.PayOrderRequest{
+	grpcCtx, cancel := context.WithTimeout(ctx, grpcTimeout)
+	defer cancel()
+
+	transaction, err := h.paymentClient.PayOrder(grpcCtx, &paymentv1.PayOrderRequest{
 		OrderUuid:     order.OrderUUID.String(),
-		PaymentMethod: mapPaymentMethod(req.GetPaymentMethod()),
+		PaymentMethod: grpcPaymentMethod,
 	})
 	if err != nil {
-		return &orderv1.PayOrderInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "ошибка платежа",
-		}, nil
+		return handlePayGRPCError(ctx, err, "payOrder"), nil
 	}
 
 	// Распарсим uuid транзакции
-	transactionUUID, err := uuid.Parse(transaction.GetTransactionUuid())
-	if err != nil {
-		return &orderv1.PayOrderInternalServerError{
-			Code:    http.StatusInternalServerError,
-			Message: "некорректный transaction_uuid от PaymentService",
-		}, nil
-	}
+	transactionUUID := uuid.MustParse(transaction.GetTransactionUuid())
 
 	// Обновить статус на PAID, обновить метод оплаты и сохранить transaction_uuid
+	h.store.mu.Lock()
+	order = h.store.orders[params.OrderUUID]
 	order.Status = OrderStatusPaid
 	order.TransactionUUID = &transactionUUID
-
-	paymentMethod := PaymentMethod(req.GetPaymentMethod())
-	order.PaymentMethod = &paymentMethod
-
+	order.PaymentMethod = new(paymentMethodToModelMap[req.PaymentMethod])
 	// делаем запись обновленного order в store
-	h.store.mu.Lock()
 	h.store.orders[params.OrderUUID] = order
 	h.store.mu.Unlock()
+
+	slog.InfoContext(ctx, "заказ оплачен", "order_uuid", params.OrderUUID, "transaction_uuid", transactionUUID)
 
 	// Вернуть transaction_uuid
 	return &orderv1.PayOrderResponse{
@@ -333,8 +291,9 @@ func (h *handler) PayOrder(ctx context.Context, req *orderv1.PayOrderRequest, pa
 func (h *handler) CancelOrder(ctx context.Context, params orderv1.CancelOrderParams) (orderv1.CancelOrderRes, error) {
 	// Найти заказ в store
 	h.store.mu.RLock()
+	defer h.store.mu.RUnlock()
+
 	order, ok := h.store.orders[params.OrderUUID]
-	h.store.mu.RUnlock()
 
 	if !ok {
 		return &orderv1.CancelOrderNotFound{
@@ -354,10 +313,106 @@ func (h *handler) CancelOrder(ctx context.Context, params orderv1.CancelOrderPar
 	// Обновить статус на CANCELLED
 	order.Status = OrderStatusCancelled
 
-	h.store.mu.Lock()
 	h.store.orders[params.OrderUUID] = order
-	h.store.mu.Unlock()
 
 	// Вернуть success
 	return &orderv1.CancelOrderResponse{}, nil
+}
+
+func orderToDTO(order Order) *orderv1.OrderDto {
+	dto := &orderv1.OrderDto{
+		OrderUUID:  order.OrderUUID,
+		HullUUID:   order.HullUUID,
+		EngineUUID: order.EngineUUID,
+		TotalPrice: order.TotalPrice,
+		Status:     orderv1.OrderStatus(order.Status),
+		CreatedAt:  order.CreatedAt,
+	}
+
+	if order.ShieldUUID != nil {
+		dto.ShieldUUID = orderv1.NewOptNilUUID(*order.ShieldUUID)
+	}
+
+	if order.WeaponUUID != nil {
+		dto.WeaponUUID = orderv1.NewOptNilUUID(*order.WeaponUUID)
+	}
+
+	if order.TransactionUUID != nil {
+		dto.TransactionUUID = orderv1.NewOptNilUUID(*order.TransactionUUID)
+	}
+
+	if order.PaymentMethod != nil {
+		dto.PaymentMethod = orderv1.NewOptNilPaymentMethod(orderv1.PaymentMethod(*order.PaymentMethod))
+	}
+
+	return dto
+}
+
+func handleGRPCError(ctx context.Context, err error, operation string) orderv1.CreateOrderRes {
+	st, ok := status.FromError(err)
+	if !ok {
+		slog.ErrorContext(ctx, "неизвестная ошибка gRPC", "operation", operation, "error", err)
+
+		return &orderv1.CreateOrderInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "внутренняя ошибка сервера",
+		}
+	}
+
+	switch st.Code() {
+	case codes.NotFound:
+		return &orderv1.CreateOrderNotFound{
+			Code:    http.StatusNotFound,
+			Message: st.Message(),
+		}
+	case codes.InvalidArgument:
+		return &orderv1.CreateOrderBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: st.Message(),
+		}
+	default:
+		slog.ErrorContext(ctx, "ошибка gRPC", "operation", operation, "code", st.Code(), "message", st.Message())
+
+		return &orderv1.CreateOrderInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "внутренняя ошибка сервера",
+		}
+	}
+}
+
+func handlePayGRPCError(ctx context.Context, err error, operation string) orderv1.PayOrderRes {
+	st, ok := status.FromError(err)
+	if !ok {
+		slog.ErrorContext(ctx, "неизвестная ошибка gRPC", "operation", operation, "error", err)
+
+		return &orderv1.PayOrderInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "внутренняя ошибка сервера",
+		}
+	}
+
+	switch st.Code() {
+	case codes.NotFound:
+		return &orderv1.PayOrderNotFound{
+			Code:    http.StatusNotFound,
+			Message: st.Message(),
+		}
+	case codes.InvalidArgument:
+		return &orderv1.PayOrderBadRequest{
+			Code:    http.StatusBadRequest,
+			Message: st.Message(),
+		}
+	case codes.FailedPrecondition, codes.AlreadyExists:
+		return &orderv1.PayOrderConflict{
+			Code:    http.StatusConflict,
+			Message: st.Message(),
+		}
+	default:
+		slog.ErrorContext(ctx, "ошибка gRPC", "operation", operation, "code", st.Code(), "message", st.Message())
+
+		return &orderv1.PayOrderInternalServerError{
+			Code:    http.StatusInternalServerError,
+			Message: "внутренняя ошибка сервера",
+		}
+	}
 }

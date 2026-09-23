@@ -34,16 +34,17 @@ const (
 )
 
 func main() {
-	// Создание gRPC соединение с InventoryService
-	inventoryConn, err := grpc.NewClient(
-		inventoryServiceAddress,
+	grpcClientOptions := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                10 * time.Second, // Интервал ping для обнаружения мертвых соединений
 			Timeout:             3 * time.Second,  // timeout ожидания pong
 			PermitWithoutStream: true,             // держать соединения теплым без активных rpc
 		}),
-	)
+	}
+
+	// Создание gRPC соединение с InventoryService
+	inventoryConn, err := grpc.NewClient(inventoryServiceAddress, grpcClientOptions...)
 	if err != nil {
 		slog.Error("не удалось подключиться к InventoryService", "error", err)
 		return
@@ -51,15 +52,7 @@ func main() {
 	defer inventoryConn.Close()
 
 	// Создание gRPC клиент PaymentService
-	paymentConn, err := grpc.NewClient(
-		paymentServiceAddress,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                10 * time.Second, // Интервал ping для обнаружения мертвых соединений
-			Timeout:             3 * time.Second,  // timeout ожидания pong
-			PermitWithoutStream: true,             // держать соединения теплым без активных rpc
-		}),
-	)
+	paymentConn, err := grpc.NewClient(paymentServiceAddress, grpcClientOptions...)
 	if err != nil {
 		slog.Error("не удалось подключиться к PaymentService", "error", err)
 		return
